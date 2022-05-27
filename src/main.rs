@@ -3,7 +3,7 @@ use message::{Class, Message, QueryOrResponse, Type};
 use nameserver::get_system_default_nameservers;
 use std::{
     error::Error,
-    net::{IpAddr, UdpSocket},
+    net::{IpAddr, UdpSocket, Ipv4Addr},
     str::FromStr,
 };
 
@@ -35,7 +35,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     println!("Nameserver: {}", nameserver.0);
 
-    let s = UdpSocket::bind(("0.0.0.0", 0))?;
+    let s = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))?;
     s.connect(nameserver)?;
 
     let query = Message::new_query(args.hostname, Type::A, Class::IN);
