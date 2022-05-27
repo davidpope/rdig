@@ -3,7 +3,7 @@ use message::{Class, Message, QueryOrResponse, Type};
 use nameserver::get_system_default_nameservers;
 use std::{
     error::Error,
-    net::{IpAddr, UdpSocket, Ipv4Addr},
+    net::{IpAddr, Ipv4Addr, UdpSocket},
     str::FromStr,
 };
 
