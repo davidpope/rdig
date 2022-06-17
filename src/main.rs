@@ -17,6 +17,9 @@ struct Args {
 
     #[clap(short, long)]
     nameserver: Option<String>,
+
+    #[clap(short, long)]
+    qtype: Option<Type>,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -35,10 +38,12 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     println!("Nameserver: {}", nameserver.0);
 
+    let qtype = args.qtype.unwrap_or(Type::A);
+
     let s = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))?;
     s.connect(nameserver)?;
 
-    let query = Message::new_query(args.hostname, Type::A, Class::IN);
+    let query = Message::new_query(args.hostname, qtype, Class::IN);
     let buf = query.serialize()?;
     s.send(&buf)?;
 
@@ -84,7 +89,7 @@ fn print_message(m: &Message) {
         println!("Answers:");
         for a in &m.answers {
             println!(
-                "    {} {} {} {} {:?}",
+                "    {} {} {} {} {}",
                 a.name, a.ttl, a.rclass, a.rtype, a.rdata
             );
         }
@@ -93,7 +98,7 @@ fn print_message(m: &Message) {
         println!("Authorities:");
         for a in &m.authorities {
             println!(
-                "    {} {} {} {} {:?}",
+                "    {} {} {} {} {}",
                 a.name, a.ttl, a.rclass, a.rtype, a.rdata
             );
         }
@@ -102,7 +107,7 @@ fn print_message(m: &Message) {
         println!("Additionals:");
         for a in &m.additionals {
             println!(
-                "    {} {} {} {} {:?}",
+                "    {} {} {} {} {}",
                 a.name, a.ttl, a.rclass, a.rtype, a.rdata
             );
         }

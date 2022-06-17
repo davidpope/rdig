@@ -1,5 +1,5 @@
 use bitvec::prelude::*;
-use std::{error::Error, fmt::Display};
+use std::{error::Error, fmt::Display, net::Ipv4Addr, str::FromStr};
 
 #[derive(Debug)]
 pub struct Message {
@@ -303,6 +303,24 @@ impl TryFrom<u16> for Type {
     }
 }
 
+// needed for Clap
+impl FromStr for Type {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "a" | "A" => Ok(Type::A),
+            "ns" | "NS" => Ok(Type::NS),
+            "cname" | "CNAME" => Ok(Type::CNAME),
+            "soa" | "SOA" => Ok(Type::SOA),
+            "ptr" | "PTR" => Ok(Type::PTR),
+            "mx" | "MX" => Ok(Type::MX),
+            "txt" | "TXT" => Ok(Type::TXT),
+            _ => Err("unsupported query type"),
+        }
+    }
+}
+
 impl Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = match self {
@@ -394,12 +412,257 @@ impl Question {
 /// Resource Record
 
 #[derive(Debug)]
+pub enum RrData {
+    Ipv4Addr(Ipv4Addr),
+    Name(String),
+    PrefString((u16, String)),
+    TxtStrings(Vec<String>),
+    Soa(Soa),
+}
+
+impl RrData {
+    pub fn serialize(&self) -> Result<Vec<u8>, Box<dyn Error>> {
+        match self {
+            RrData::Ipv4Addr(addr) => {
+                let bytes = addr.octets();
+                Ok(Vec::from(bytes))
+            }
+            RrData::Name(s) => {
+                let bytes = serialize_name(s)?;
+                Ok(bytes)
+            }
+            RrData::PrefString(pref_string) => {
+                let mut bytes = vec![(pref_string.0 >> 8) as u8, (pref_string.0 & 0xFF) as u8];
+                bytes.append(&mut serialize_name(&pref_string.1)?);
+
+                Ok(bytes)
+            }
+            RrData::TxtStrings(ref txt_strings) => {
+                let mut bytes = vec![];
+                for s in txt_strings {
+                    bytes.push((s.len() >> 8) as u8);
+                    bytes.push((s.len() & 0xFF) as u8);
+                    for b in s.as_bytes() {
+                        if !b.is_ascii() {
+                            return Err("non-ascii character in txtstring".into());
+                        }
+                        bytes.push(*b);
+                    }
+                }
+                Ok(bytes)
+            }
+            RrData::Soa(soa) => {
+                let bytes = soa.serialize()?;
+                Ok(bytes)
+            }
+        }
+    }
+
+    pub fn deserialize(rtype: Type, buf: &[u8], i: &mut usize) -> Result<RrData, Box<dyn Error>> {
+        check_space(buf, *i, 2)?;
+        let rd_length = (buf[*i] as u16) << 8 | buf[*i + 1] as u16;
+        *i += 2;
+
+        check_space(buf, *i, rd_length as usize)?;
+
+        match rtype {
+            Type::A => {
+                if rd_length != 4 {
+                    return Err("rdata for IpV4 address is incorrect length".into());
+                }
+                let arr: [u8; 4] = buf[*i..*i + rd_length as usize].try_into().unwrap();
+                let addr = Ipv4Addr::try_from(arr)?;
+                *i += 4;
+                Ok(RrData::Ipv4Addr(addr))
+            }
+            Type::NS => {
+                let ns = deserialize_name(buf, i)?;
+                Ok(RrData::Name(ns))
+            }
+            Type::CNAME => {
+                let cname = deserialize_name(buf, i)?;
+                Ok(RrData::Name(cname))
+            }
+            Type::SOA => {
+                let soa = Soa::deserialize(buf, i)?;
+                Ok(RrData::Soa(soa))
+            }
+            Type::PTR => {
+                let ptr = deserialize_name(buf, i)?;
+                Ok(RrData::Name(ptr))
+            }
+            Type::MX => {
+                check_space(buf, *i, 2)?;
+                let pref: u16 = (buf[0] as u16) << 8 | buf[1] as u16;
+                *i += 2;
+                let exch = deserialize_name(buf, i)?;
+                Ok(RrData::PrefString((pref, exch)))
+            }
+            Type::TXT => {
+                let mut strings = vec![];
+                let mut remaining = rd_length;
+                while remaining != 0 {
+                    check_space(buf, *i, 1)?;
+                    let len = buf[*i] as usize;
+                    *i += 1;
+                    remaining -= 1;
+
+                    check_space(buf, *i, len)?;
+                    let s = std::str::from_utf8(&buf[*i..*i + len]);
+                    if let Ok(s) = s {
+                        strings.push(String::from(s));
+                    }
+                    *i += len;
+                    if remaining < len as u16 {
+                        // underflow
+                        return Err("corrupt TXT rdata character-string".into());
+                    }
+                    remaining -= len as u16;
+                }
+
+                Ok(RrData::TxtStrings(strings))
+            }
+        }
+    }
+}
+
+impl Display for RrData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RrData::Ipv4Addr(addr) => {
+                write!(f, "{}", addr)
+            }
+            RrData::Name(s) => {
+                write!(f, "{}", s)
+            }
+            RrData::PrefString(pref_string) => {
+                write!(f, "{} {}", pref_string.0, pref_string.1)
+            }
+            RrData::TxtStrings(strings) => {
+                let strings: Vec<String> = strings.iter().map(|s| format!("\"{}\"", s)).collect();
+                write!(f, "{}", strings.join(" "))
+            }
+            RrData::Soa(soa) => {
+                write!(
+                    f,
+                    "{} {} {} {} {} {} {}",
+                    soa.mname,
+                    soa.rname,
+                    soa.serial,
+                    soa.refresh,
+                    soa.retry,
+                    soa.expire,
+                    soa.minimum
+                )
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Soa {
+    mname: String,
+    rname: String,
+    serial: u32,
+    refresh: u32,
+    retry: u32,
+    expire: u32,
+    minimum: u32,
+}
+
+impl Soa {
+    fn serialize(&self) -> Result<Vec<u8>, Box<dyn Error>> {
+        let mut result = Vec::new();
+
+        result.append(&mut serialize_name(&self.mname)?);
+        result.append(&mut serialize_name(&self.rname)?);
+
+        result.push(((self.serial & 0xFF000000) >> 24) as u8);
+        result.push(((self.serial & 0x00FF0000) >> 16) as u8);
+        result.push(((self.serial & 0x0000FF00) >> 8) as u8);
+        result.push((self.serial & 0x000000FF) as u8);
+
+        result.push(((self.refresh & 0xFF000000) >> 24) as u8);
+        result.push(((self.refresh & 0x00FF0000) >> 16) as u8);
+        result.push(((self.refresh & 0x0000FF00) >> 8) as u8);
+        result.push((self.refresh & 0x000000FF) as u8);
+
+        result.push(((self.retry & 0xFF000000) >> 24) as u8);
+        result.push(((self.retry & 0x00FF0000) >> 16) as u8);
+        result.push(((self.retry & 0x0000FF00) >> 8) as u8);
+        result.push((self.retry & 0x000000FF) as u8);
+
+        result.push(((self.expire & 0xFF000000) >> 24) as u8);
+        result.push(((self.expire & 0x00FF0000) >> 16) as u8);
+        result.push(((self.expire & 0x0000FF00) >> 8) as u8);
+        result.push((self.expire & 0x000000FF) as u8);
+
+        result.push(((self.minimum & 0xFF000000) >> 24) as u8);
+        result.push(((self.minimum & 0x00FF0000) >> 16) as u8);
+        result.push(((self.minimum & 0x0000FF00) >> 8) as u8);
+        result.push((self.minimum & 0x000000FF) as u8);
+
+        Ok(result)
+    }
+
+    fn deserialize(buf: &[u8], i: &mut usize) -> Result<Soa, Box<dyn Error>> {
+        let mname = deserialize_name(buf, i)?;
+        let rname = deserialize_name(buf, i)?;
+
+        check_space(buf, *i, 4)?;
+        let serial = (buf[*i] as u32) << 24
+            | (buf[*i + 1] as u32) << 16
+            | (buf[*i + 2] as u32) << 8
+            | (buf[*i + 3] as u32);
+        *i += 4;
+
+        check_space(buf, *i, 4)?;
+        let refresh = (buf[*i] as u32) << 24
+            | (buf[*i + 1] as u32) << 16
+            | (buf[*i + 2] as u32) << 8
+            | (buf[*i + 3] as u32);
+        *i += 4;
+
+        check_space(buf, *i, 4)?;
+        let retry = (buf[*i] as u32) << 24
+            | (buf[*i + 1] as u32) << 16
+            | (buf[*i + 2] as u32) << 8
+            | (buf[*i + 3] as u32);
+        *i += 4;
+
+        check_space(buf, *i, 4)?;
+        let expire = (buf[*i] as u32) << 24
+            | (buf[*i + 1] as u32) << 16
+            | (buf[*i + 2] as u32) << 8
+            | (buf[*i + 3] as u32);
+        *i += 4;
+
+        check_space(buf, *i, 4)?;
+        let minimum = (buf[*i] as u32) << 24
+            | (buf[*i + 1] as u32) << 16
+            | (buf[*i + 2] as u32) << 8
+            | (buf[*i + 3] as u32);
+        *i += 4;
+
+        Ok(Soa {
+            mname,
+            rname,
+            serial,
+            refresh,
+            retry,
+            expire,
+            minimum,
+        })
+    }
+}
+
+#[derive(Debug)]
 pub struct ResourceRecord {
     pub name: String,
     pub rtype: Type,
     pub rclass: Class,
     pub ttl: u32,
-    pub rdata: Vec<u8>,
+    pub rdata: RrData,
 }
 
 impl ResourceRecord {
@@ -418,11 +681,12 @@ impl ResourceRecord {
         result.push(((self.ttl & 0x0000FF00) >> 8) as u8);
         result.push((self.ttl & 0x000000FF) as u8);
 
-        let rd_length = u16::try_from(self.rdata.len())?;
+        let mut rdata = self.rdata.serialize()?;
+        let rd_length = u16::try_from(rdata.len())?;
         result.push((rd_length >> 8) as u8);
         result.push((rd_length & 0xFF) as u8);
 
-        result.append(&mut self.rdata.clone());
+        result.append(&mut rdata);
 
         Ok(result)
     }
@@ -447,14 +711,7 @@ impl ResourceRecord {
             | buf[*i + 3] as u32;
         *i += 4;
 
-        check_space(buf, *i, 2)?;
-        let rd_length = (buf[*i] as u16) << 8 | buf[*i + 1] as u16;
-        *i += 2;
-
-        check_space(buf, *i, rd_length as usize)?;
-        let raw_rdata = &buf[*i..*i + rd_length as usize];
-        let rdata = Vec::from(raw_rdata);
-        *i += rd_length as usize;
+        let rdata = RrData::deserialize(rtype, buf, i)?;
 
         Ok(ResourceRecord {
             name,
