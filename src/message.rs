@@ -115,14 +115,14 @@ pub enum OpCode {
 }
 
 impl TryFrom<u8> for OpCode {
-    type Error = &'static str;
+    type Error = String;
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
             0 => Ok(OpCode::Query),
             1 => Ok(OpCode::Iquery),
             2 => Ok(OpCode::Status),
-            _ => Err("unknown opcode"),
+            _ => Err(format!("unknown opcode {value}")),
         }
     }
 }
@@ -138,7 +138,7 @@ pub enum ResponseCode {
 }
 
 impl TryFrom<u8> for ResponseCode {
-    type Error = &'static str;
+    type Error = String;
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
@@ -148,7 +148,7 @@ impl TryFrom<u8> for ResponseCode {
             3 => Ok(ResponseCode::NameError),
             4 => Ok(ResponseCode::NotImplemented),
             5 => Ok(ResponseCode::Refused),
-            _ => Err("unknown response code"),
+            _ => Err(format!("unknown response code {value}")),
         }
     }
 }
@@ -287,7 +287,7 @@ pub enum Type {
 }
 
 impl TryFrom<u16> for Type {
-    type Error = &'static str;
+    type Error = String;
 
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         match value {
@@ -298,14 +298,14 @@ impl TryFrom<u16> for Type {
             12 => Ok(Type::PTR),
             15 => Ok(Type::MX),
             16 => Ok(Type::TXT),
-            _ => Err("unknown type"),
+            _ => Err(format!("unknown type {value}")),
         }
     }
 }
 
 // needed for Clap
 impl FromStr for Type {
-    type Err = &'static str;
+    type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
@@ -316,7 +316,7 @@ impl FromStr for Type {
             "ptr" | "PTR" => Ok(Type::PTR),
             "mx" | "MX" => Ok(Type::MX),
             "txt" | "TXT" => Ok(Type::TXT),
-            _ => Err("unsupported query type"),
+            _ => Err(format!("unsupported query type {s}")),
         }
     }
 }
@@ -345,12 +345,12 @@ pub enum Class {
 }
 
 impl TryFrom<u16> for Class {
-    type Error = &'static str;
+    type Error = String;
 
     fn try_from(value: u16) -> Result<Self, Self::Error> {
         match value {
             1 => Ok(Class::IN),
-            _ => Err("unknown class"),
+            _ => Err(format!("unknown class {value}")),
         }
     }
 }
