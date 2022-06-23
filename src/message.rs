@@ -11,7 +11,7 @@ pub struct Message {
 }
 
 impl Message {
-    pub fn new_query(qname: String, qtype: Type, qclass: Class) -> Message {
+    pub fn new_query(qname: &str, qtype: Type, qclass: Class) -> Message {
         let mut msg = Message {
             header: Header::new_query(),
             questions: vec![],
@@ -19,6 +19,8 @@ impl Message {
             authorities: vec![],
             additionals: vec![],
         };
+
+        let qname = qname.to_owned();
 
         msg.questions.push(Question {
             qname,

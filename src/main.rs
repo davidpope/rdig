@@ -3,7 +3,9 @@ use message::{Class, Message, QueryOrResponse, Type};
 use nameserver::get_system_default_nameservers;
 use std::{
     error::Error,
-    net::{IpAddr, Ipv4Addr, UdpSocket},
+    io::Read,
+    io::Write,
+    net::{IpAddr, Ipv4Addr, TcpStream, UdpSocket},
     str::FromStr,
 };
 
@@ -40,11 +42,27 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let qtype = args.qtype.unwrap_or(Type::A);
 
+    let mut response = query_udp(nameserver, &args.hostname, qtype)?;
+    if response.header.truncation {
+        println!("Response truncated, falling back to TCP...");
+        response = query_tcp(nameserver, &args.hostname, qtype)?;
+    }
+
+    print_message(&response);
+
+    Ok(())
+}
+
+fn query_udp(
+    nameserver: (IpAddr, u16),
+    qname: &str,
+    qtype: Type,
+) -> Result<Message, Box<dyn Error>> {
+    let query = Message::new_query(qname, qtype, Class::IN);
+    let buf = query.serialize()?;
+
     let s = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))?;
     s.connect(nameserver)?;
-
-    let query = Message::new_query(args.hostname, qtype, Class::IN);
-    let buf = query.serialize()?;
     s.send(&buf)?;
 
     let mut buf = [0; 512];
@@ -52,9 +70,36 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let response = Message::deserialize(&buf[0..size])?;
 
-    print_message(&response);
+    Ok(response)
+}
 
-    Ok(())
+fn query_tcp(
+    nameserver: (IpAddr, u16),
+    qname: &str,
+    qtype: Type,
+) -> Result<Message, Box<dyn Error>> {
+    let query = Message::new_query(qname, qtype, Class::IN);
+    let buf = query.serialize()?;
+
+    let mut s = TcpStream::connect(nameserver)?;
+    s.set_nodelay(true)?;
+
+    let write_len = buf.len();
+    let write_len_header = [(write_len >> 8) as u8, write_len as u8];
+    s.write_all(&write_len_header[..])?;
+    s.write_all(&buf)?;
+    s.flush()?;
+
+    let mut len_header = [0_u8; 2];
+    s.read_exact(&mut len_header)?;
+    let len = (len_header[0] as usize) << 8 | len_header[1] as usize;
+
+    let mut read_buf = vec![0_u8; len];
+    s.read_exact(&mut read_buf)?;
+
+    let response = Message::deserialize(&read_buf)?;
+
+    Ok(response)
 }
 
 fn print_message(m: &Message) {
