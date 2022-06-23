@@ -28,17 +28,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
 
     let nameserver = if let Some(ns) = args.nameserver {
-        let addr = IpAddr::from_str(&ns)?;
-        (addr, 53)
+        IpAddr::from_str(&ns)?
     } else {
         let nss = get_system_default_nameservers()?;
         if nss.is_empty() {
             return Err("failed to get default nameservers".into());
         }
-        (nss[0], 53) // TODO: iterate through these below w/timeouts instead of picking first
+        nss[0] // TODO: iterate through these below w/timeouts
     };
 
-    println!("Nameserver: {}", nameserver.0);
+    println!("Nameserver: {}", nameserver);
 
     let qtype = args.qtype.unwrap_or(Type::A);
 
@@ -54,7 +53,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 
 fn query_udp(
-    nameserver: (IpAddr, u16),
+    nameserver: IpAddr,
     qname: &str,
     qtype: Type,
 ) -> Result<Message, Box<dyn Error>> {
@@ -62,7 +61,7 @@ fn query_udp(
     let buf = query.serialize()?;
 
     let s = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))?;
-    s.connect(nameserver)?;
+    s.connect((nameserver, 53))?;
     s.send(&buf)?;
 
     let mut buf = [0; 512];
@@ -74,14 +73,14 @@ fn query_udp(
 }
 
 fn query_tcp(
-    nameserver: (IpAddr, u16),
+    nameserver: IpAddr,
     qname: &str,
     qtype: Type,
 ) -> Result<Message, Box<dyn Error>> {
     let query = Message::new_query(qname, qtype, Class::IN);
     let buf = query.serialize()?;
 
-    let mut s = TcpStream::connect(nameserver)?;
+    let mut s = TcpStream::connect((nameserver, 53))?;
     s.set_nodelay(true)?;
 
     let write_len = buf.len();
