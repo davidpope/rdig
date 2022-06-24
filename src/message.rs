@@ -592,6 +592,7 @@ impl Soa {
         write_be_u32!(result, self.refresh);
         write_be_u32!(result, self.retry);
         write_be_u32!(result, self.expire);
+        write_be_u32!(result, self.minimum);
 
         Ok(result)
     }
