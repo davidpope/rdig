@@ -20,8 +20,8 @@ struct Args {
     #[clap(short, long)]
     nameserver: Option<String>,
 
-    #[clap(short, long)]
-    qtype: Option<Type>,
+    #[clap(short, long, default_value_t = Type::A)]
+    qtype: Type,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -40,9 +40,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     println!("Nameserver: {}", nameserver);
 
-    let qtype = args.qtype.unwrap_or(Type::A);
-
-    let response = query(&args.hostname, qtype, nameserver)?;
+    let response = query(&args.hostname, args.qtype, nameserver)?;
 
     print_message(&response);
 
