@@ -71,20 +71,20 @@ fn query_udp(nameserver: IpAddr, qname: &str, qtype: Type) -> Result<Message, Bo
 
 fn query_tcp(nameserver: IpAddr, qname: &str, qtype: Type) -> Result<Message, Box<dyn Error>> {
     let query = Message::new_query(qname, qtype, Class::IN);
-    let buf = query.serialize()?;
+    let write_buf = query.serialize()?;
 
     let mut s = TcpStream::connect((nameserver, 53))?;
     s.set_nodelay(true)?;
 
-    let write_len = buf.len();
+    let write_len = write_buf.len();
     let write_len_header = [(write_len >> 8) as u8, write_len as u8];
     s.write_all(&write_len_header[..])?;
-    s.write_all(&buf)?;
+    s.write_all(&write_buf)?;
     s.flush()?;
 
-    let mut len_header = [0_u8; 2];
-    s.read_exact(&mut len_header)?;
-    let len = (len_header[0] as usize) << 8 | len_header[1] as usize;
+    let mut read_len_header = [0_u8; 2];
+    s.read_exact(&mut read_len_header)?;
+    let len = (read_len_header[0] as usize) << 8 | read_len_header[1] as usize;
 
     let mut read_buf = vec![0_u8; len];
     s.read_exact(&mut read_buf)?;
