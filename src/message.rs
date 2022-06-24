@@ -61,13 +61,6 @@ impl Message {
             v.append(&mut buf);
         }
 
-        if v.len() > 512 {
-            // should we futz with the truncation bit instead of erroring?
-            return Err(MessageError::SerializationFailed(
-                "serialized query too long".to_owned(),
-            ));
-        }
-
         Ok(v)
     }
 

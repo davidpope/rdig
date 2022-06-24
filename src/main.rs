@@ -42,24 +42,35 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let qtype = args.qtype.unwrap_or(Type::A);
 
-    let mut response = query_udp(nameserver, &args.hostname, qtype)?;
-    if response.header.truncation {
-        println!("Response truncated, falling back to TCP...");
-        response = query_tcp(nameserver, &args.hostname, qtype)?;
-    }
+    let response = query(&args.hostname, qtype, nameserver)?;
 
     print_message(&response);
 
     Ok(())
 }
 
-fn query_udp(nameserver: IpAddr, qname: &str, qtype: Type) -> Result<Message, Box<dyn Error>> {
-    let query = Message::new_query(qname, qtype, Class::IN);
-    let buf = query.serialize()?;
+fn query(hostname: &str, qtype: Type, nameserver: IpAddr) -> Result<Message, Box<dyn Error>> {
+    let query = Message::new_query(hostname, qtype, Class::IN);
+    let write_buf = query.serialize()?;
 
+    let response = if write_buf.len() <= 512 {
+        let mut r = query_udp(nameserver, &write_buf)?;
+        if r.header.truncation {
+            println!("Response truncated, falling back to TCP...");
+            r = query_tcp(nameserver, &write_buf)?;
+        }
+        r
+    } else {
+        println!("Large query, falling back to TCP...");
+        query_tcp(nameserver, &write_buf)?
+    };
+    Ok(response)
+}
+
+fn query_udp(nameserver: IpAddr, write_buf: &[u8]) -> Result<Message, Box<dyn Error>> {
     let s = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))?;
     s.connect((nameserver, 53))?;
-    s.send(&buf)?;
+    s.send(write_buf)?;
 
     let mut buf = [0; 512];
     let size = s.recv(&mut buf)?;
@@ -69,17 +80,14 @@ fn query_udp(nameserver: IpAddr, qname: &str, qtype: Type) -> Result<Message, Bo
     Ok(response)
 }
 
-fn query_tcp(nameserver: IpAddr, qname: &str, qtype: Type) -> Result<Message, Box<dyn Error>> {
-    let query = Message::new_query(qname, qtype, Class::IN);
-    let write_buf = query.serialize()?;
-
+fn query_tcp(nameserver: IpAddr, write_buf: &[u8]) -> Result<Message, Box<dyn Error>> {
     let mut s = TcpStream::connect((nameserver, 53))?;
     s.set_nodelay(true)?;
 
     let write_len = write_buf.len();
     let write_len_header = [(write_len >> 8) as u8, write_len as u8];
     s.write_all(&write_len_header[..])?;
-    s.write_all(&write_buf)?;
+    s.write_all(write_buf)?;
     s.flush()?;
 
     let mut read_len_header = [0_u8; 2];
