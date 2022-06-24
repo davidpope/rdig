@@ -579,30 +579,19 @@ impl Soa {
         result.append(&mut serialize_name(&self.mname)?);
         result.append(&mut serialize_name(&self.rname)?);
 
-        result.push(((self.serial & 0xFF000000) >> 24) as u8);
-        result.push(((self.serial & 0x00FF0000) >> 16) as u8);
-        result.push(((self.serial & 0x0000FF00) >> 8) as u8);
-        result.push((self.serial & 0x000000FF) as u8);
+        macro_rules! write_be_u32 {
+            ($vec:ident, $var:expr) => {
+                $vec.push((($var & 0xFF000000) >> 24) as u8);
+                $vec.push((($var & 0x00FF0000) >> 16) as u8);
+                $vec.push((($var & 0x0000FF00) >> 8) as u8);
+                $vec.push(($var & 0x000000FF) as u8);
+            };
+        }
 
-        result.push(((self.refresh & 0xFF000000) >> 24) as u8);
-        result.push(((self.refresh & 0x00FF0000) >> 16) as u8);
-        result.push(((self.refresh & 0x0000FF00) >> 8) as u8);
-        result.push((self.refresh & 0x000000FF) as u8);
-
-        result.push(((self.retry & 0xFF000000) >> 24) as u8);
-        result.push(((self.retry & 0x00FF0000) >> 16) as u8);
-        result.push(((self.retry & 0x0000FF00) >> 8) as u8);
-        result.push((self.retry & 0x000000FF) as u8);
-
-        result.push(((self.expire & 0xFF000000) >> 24) as u8);
-        result.push(((self.expire & 0x00FF0000) >> 16) as u8);
-        result.push(((self.expire & 0x0000FF00) >> 8) as u8);
-        result.push((self.expire & 0x000000FF) as u8);
-
-        result.push(((self.minimum & 0xFF000000) >> 24) as u8);
-        result.push(((self.minimum & 0x00FF0000) >> 16) as u8);
-        result.push(((self.minimum & 0x0000FF00) >> 8) as u8);
-        result.push((self.minimum & 0x000000FF) as u8);
+        write_be_u32!(result, self.serial);
+        write_be_u32!(result, self.refresh);
+        write_be_u32!(result, self.retry);
+        write_be_u32!(result, self.expire);
 
         Ok(result)
     }
@@ -611,39 +600,33 @@ impl Soa {
         let mname = deserialize_name(buf, i)?;
         let rname = deserialize_name(buf, i)?;
 
+        macro_rules! read_be_u32 {
+            ($buf:expr, $off:expr) => {
+                ($buf[$off] as u32) << 24
+                | ($buf[$off + 1] as u32) << 16
+                | ($buf[$off + 2] as u32) << 8
+                | ($buf[$off + 3] as u32)
+            };
+        }
+
         check_space(buf, *i, 4)?;
-        let serial = (buf[*i] as u32) << 24
-            | (buf[*i + 1] as u32) << 16
-            | (buf[*i + 2] as u32) << 8
-            | (buf[*i + 3] as u32);
+        let serial = read_be_u32!(buf, *i);
         *i += 4;
 
         check_space(buf, *i, 4)?;
-        let refresh = (buf[*i] as u32) << 24
-            | (buf[*i + 1] as u32) << 16
-            | (buf[*i + 2] as u32) << 8
-            | (buf[*i + 3] as u32);
+        let refresh = read_be_u32!(buf, *i);
         *i += 4;
 
         check_space(buf, *i, 4)?;
-        let retry = (buf[*i] as u32) << 24
-            | (buf[*i + 1] as u32) << 16
-            | (buf[*i + 2] as u32) << 8
-            | (buf[*i + 3] as u32);
+        let retry = read_be_u32!(buf, *i);
         *i += 4;
 
         check_space(buf, *i, 4)?;
-        let expire = (buf[*i] as u32) << 24
-            | (buf[*i + 1] as u32) << 16
-            | (buf[*i + 2] as u32) << 8
-            | (buf[*i + 3] as u32);
+        let expire = read_be_u32!(buf, *i);
         *i += 4;
 
         check_space(buf, *i, 4)?;
-        let minimum = (buf[*i] as u32) << 24
-            | (buf[*i + 1] as u32) << 16
-            | (buf[*i + 2] as u32) << 8
-            | (buf[*i + 3] as u32);
+        let minimum = read_be_u32!(buf, *i);
         *i += 4;
 
         Ok(Soa {
