@@ -52,11 +52,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn query_udp(
-    nameserver: IpAddr,
-    qname: &str,
-    qtype: Type,
-) -> Result<Message, Box<dyn Error>> {
+fn query_udp(nameserver: IpAddr, qname: &str, qtype: Type) -> Result<Message, Box<dyn Error>> {
     let query = Message::new_query(qname, qtype, Class::IN);
     let buf = query.serialize()?;
 
@@ -72,11 +68,7 @@ fn query_udp(
     Ok(response)
 }
 
-fn query_tcp(
-    nameserver: IpAddr,
-    qname: &str,
-    qtype: Type,
-) -> Result<Message, Box<dyn Error>> {
+fn query_tcp(nameserver: IpAddr, qname: &str, qtype: Type) -> Result<Message, Box<dyn Error>> {
     let query = Message::new_query(qname, qtype, Class::IN);
     let buf = query.serialize()?;
 
