@@ -423,7 +423,7 @@ pub enum RrData {
 }
 
 impl RrData {
-    pub fn serialize(&self) -> Result<Vec<u8>, Box<dyn Error>> {
+    fn serialize(&self) -> Result<Vec<u8>, Box<dyn Error>> {
         match self {
             RrData::Ipv4Addr(addr) => {
                 let bytes = addr.octets();
@@ -460,7 +460,7 @@ impl RrData {
         }
     }
 
-    pub fn deserialize(rtype: Type, buf: &[u8], i: &mut usize) -> Result<RrData, Box<dyn Error>> {
+    fn deserialize(rtype: Type, buf: &[u8], i: &mut usize) -> Result<RrData, Box<dyn Error>> {
         check_space(buf, *i, 2)?;
         let rd_length = (buf[*i] as u16) << 8 | buf[*i + 1] as u16;
         *i += 2;
