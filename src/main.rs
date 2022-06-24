@@ -12,14 +12,18 @@ use std::{
 mod message;
 mod nameserver;
 
+/// Simple toy program to query DNS like `dig`
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
+    /// The hostname to look up
     hostname: String,
 
+    /// The nameserver to use
     #[clap(short, long)]
     nameserver: Option<String>,
 
+    /// The type of DNS record to retrieve
     #[clap(short, long, default_value_t = Type::A)]
     qtype: Type,
 }
