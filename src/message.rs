@@ -604,9 +604,9 @@ impl Soa {
         macro_rules! read_be_u32 {
             ($buf:expr, $off:expr) => {
                 ($buf[$off] as u32) << 24
-                | ($buf[$off + 1] as u32) << 16
-                | ($buf[$off + 2] as u32) << 8
-                | ($buf[$off + 3] as u32)
+                    | ($buf[$off + 1] as u32) << 16
+                    | ($buf[$off + 2] as u32) << 8
+                    | ($buf[$off + 3] as u32)
             };
         }
 
