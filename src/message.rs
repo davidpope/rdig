@@ -1,5 +1,18 @@
 use bitvec::prelude::*;
-use std::{error::Error, fmt::Display, net::Ipv4Addr, str::FromStr};
+use std::{fmt::Display, net::Ipv4Addr, str::FromStr};
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+pub enum MessageError {
+    #[error("validation error: {0}")]
+    ValidationError(String),
+
+    #[error("serialization failed: {0}")]
+    SerializationFailed(String),
+
+    #[error("deserialization failed: {0}")]
+    DeserializationFailed(String),
+}
 
 #[derive(Debug)]
 pub struct Message {
@@ -32,7 +45,7 @@ impl Message {
         msg
     }
 
-    pub fn serialize(&self) -> Result<Vec<u8>, Box<dyn Error>> {
+    pub fn serialize(&self) -> Result<Vec<u8>, MessageError> {
         let mut v = self.header.serialize();
 
         assert_eq!(self.questions.len(), self.header.qd_count as usize);
@@ -50,13 +63,15 @@ impl Message {
 
         if v.len() > 512 {
             // should we futz with the truncation bit instead of erroring?
-            return Err("serialized query too long".into());
+            return Err(MessageError::SerializationFailed(
+                "serialized query too long".to_owned(),
+            ));
         }
 
         Ok(v)
     }
 
-    pub fn deserialize(buf: &[u8]) -> Result<Message, Box<dyn Error>> {
+    pub fn deserialize(buf: &[u8]) -> Result<Message, MessageError> {
         let mut i = 0usize;
         let header = Header::deserialize(buf, &mut i)?;
 
@@ -165,7 +180,7 @@ impl Display for ResponseCode {
             ResponseCode::NotImplemented => "NOTIMPLEMENTED",
             ResponseCode::Refused => "REFUSED",
         };
-        write!(f, "{}", s)
+        write!(f, "{s}")
     }
 }
 
@@ -220,7 +235,7 @@ impl Header {
         pkt.as_raw_slice().to_vec()
     }
 
-    fn deserialize(buf: &[u8], i: &mut usize) -> Result<Header, Box<dyn Error>> {
+    fn deserialize(buf: &[u8], i: &mut usize) -> Result<Header, MessageError> {
         let hdr: &BitSlice<u8, Msb0> = BitSlice::from_slice(buf);
 
         check_space(buf, *i, 12)?; // this covers the entire header
@@ -231,7 +246,9 @@ impl Header {
         let qr = QueryOrResponse::from(raw_qr);
 
         let raw_opcode: u8 = hdr[17..=20].load();
-        let opcode = OpCode::try_from(raw_opcode)?;
+        let opcode = OpCode::try_from(raw_opcode).map_err(|e| {
+            MessageError::DeserializationFailed(format!("received invalid opcode: {e}"))
+        })?;
 
         let authoritative_answer = *hdr.get(21).unwrap();
         let truncation = *hdr.get(22).unwrap();
@@ -239,7 +256,9 @@ impl Header {
         let recursion_available = *hdr.get(24).unwrap();
 
         let raw_rcode: u8 = hdr[28..=31].load();
-        let response_code = ResponseCode::try_from(raw_rcode)?;
+        let response_code = ResponseCode::try_from(raw_rcode).map_err(|e| {
+            MessageError::DeserializationFailed(format!("received invalid response code: {e}"))
+        })?;
 
         let qd_count = hdr[32..=47].load_be();
         let an_count = hdr[48..=63].load_be();
@@ -334,7 +353,7 @@ impl Display for Type {
             Type::MX => "MX",
             Type::TXT => "TXT",
         };
-        write!(f, "{}", s)
+        write!(f, "{s}")
     }
 }
 
@@ -362,7 +381,7 @@ impl Display for Class {
         let s = match self {
             Class::IN => "IN",
         };
-        write!(f, "{}", s)
+        write!(f, "{s}")
     }
 }
 
@@ -374,7 +393,7 @@ pub struct Question {
 }
 
 impl Question {
-    fn serialize(&self) -> Result<Vec<u8>, Box<dyn Error>> {
+    fn serialize(&self) -> Result<Vec<u8>, MessageError> {
         let mut result: Vec<u8> = Vec::new();
 
         result.append(&mut serialize_name(&self.qname)?);
@@ -388,18 +407,21 @@ impl Question {
         Ok(result)
     }
 
-    fn deserialize(buf: &[u8], i: &mut usize) -> Result<Question, Box<dyn Error>> {
+    fn deserialize(buf: &[u8], i: &mut usize) -> Result<Question, MessageError> {
         // read name
         let qname = deserialize_name(buf, i)?;
 
         check_space(buf, *i, 2)?;
         let raw_q_type = (buf[*i] as u16) << 8 | buf[*i + 1] as u16;
-        let qtype = Type::try_from(raw_q_type)?;
+        let qtype = Type::try_from(raw_q_type)
+            .map_err(|e| MessageError::DeserializationFailed(format!("invalid query type: {e}")))?;
         *i += 2;
 
         check_space(buf, *i, 2)?;
         let raw_q_class = (buf[*i] as u16) << 8 | buf[*i + 1] as u16;
-        let qclass = Class::try_from(raw_q_class)?;
+        let qclass = Class::try_from(raw_q_class).map_err(|e| {
+            MessageError::DeserializationFailed(format!("invalid query class: {e}"))
+        })?;
         *i += 2;
 
         Ok(Question {
@@ -423,7 +445,7 @@ pub enum RrData {
 }
 
 impl RrData {
-    fn serialize(&self) -> Result<Vec<u8>, Box<dyn Error>> {
+    fn serialize(&self) -> Result<Vec<u8>, MessageError> {
         match self {
             RrData::Ipv4Addr(addr) => {
                 let bytes = addr.octets();
@@ -446,7 +468,9 @@ impl RrData {
                     bytes.push((s.len() & 0xFF) as u8);
                     for b in s.as_bytes() {
                         if !b.is_ascii() {
-                            return Err("non-ascii character in txtstring".into());
+                            return Err(MessageError::ValidationError(format!(
+                                "non-ascii character '{b}' in txtstring"
+                            )));
                         }
                         bytes.push(*b);
                     }
@@ -460,7 +484,7 @@ impl RrData {
         }
     }
 
-    fn deserialize(rtype: Type, buf: &[u8], i: &mut usize) -> Result<RrData, Box<dyn Error>> {
+    fn deserialize(rtype: Type, buf: &[u8], i: &mut usize) -> Result<RrData, MessageError> {
         check_space(buf, *i, 2)?;
         let rd_length = (buf[*i] as u16) << 8 | buf[*i + 1] as u16;
         *i += 2;
@@ -470,10 +494,12 @@ impl RrData {
         match rtype {
             Type::A => {
                 if rd_length != 4 {
-                    return Err("rdata for IpV4 address is incorrect length".into());
+                    return Err(MessageError::DeserializationFailed(
+                        "rdata for IpV4 address is incorrect length".to_owned(),
+                    ));
                 }
                 let arr: [u8; 4] = buf[*i..*i + rd_length as usize].try_into().unwrap();
-                let addr = Ipv4Addr::try_from(arr)?;
+                let addr = Ipv4Addr::from(arr);
                 *i += 4;
                 Ok(RrData::Ipv4Addr(addr))
             }
@@ -517,7 +543,9 @@ impl RrData {
                     *i += len;
                     if remaining < len as u16 {
                         // underflow
-                        return Err("corrupt TXT rdata character-string".into());
+                        return Err(MessageError::DeserializationFailed(
+                            "corrupt TXT rdata character-string".to_owned(),
+                        ));
                     }
                     remaining -= len as u16;
                 }
@@ -532,10 +560,10 @@ impl Display for RrData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             RrData::Ipv4Addr(addr) => {
-                write!(f, "{}", addr)
+                write!(f, "{addr}")
             }
             RrData::Name(s) => {
-                write!(f, "{}", s)
+                write!(f, "{s}")
             }
             RrData::PrefString(pref_string) => {
                 write!(f, "{} {}", pref_string.0, pref_string.1)
@@ -573,7 +601,7 @@ pub struct Soa {
 }
 
 impl Soa {
-    fn serialize(&self) -> Result<Vec<u8>, Box<dyn Error>> {
+    fn serialize(&self) -> Result<Vec<u8>, MessageError> {
         let mut result = Vec::new();
 
         result.append(&mut serialize_name(&self.mname)?);
@@ -597,7 +625,7 @@ impl Soa {
         Ok(result)
     }
 
-    fn deserialize(buf: &[u8], i: &mut usize) -> Result<Soa, Box<dyn Error>> {
+    fn deserialize(buf: &[u8], i: &mut usize) -> Result<Soa, MessageError> {
         let mname = deserialize_name(buf, i)?;
         let rname = deserialize_name(buf, i)?;
 
@@ -652,7 +680,7 @@ pub struct ResourceRecord {
 }
 
 impl ResourceRecord {
-    fn serialize(&self) -> Result<Vec<u8>, Box<dyn Error>> {
+    fn serialize(&self) -> Result<Vec<u8>, MessageError> {
         let mut result = Vec::new();
 
         result.append(&mut serialize_name(&self.name)?);
@@ -668,7 +696,9 @@ impl ResourceRecord {
         result.push((self.ttl & 0x000000FF) as u8);
 
         let mut rdata = self.rdata.serialize()?;
-        let rd_length = u16::try_from(rdata.len())?;
+        let rd_length = u16::try_from(rdata.len()).map_err(|e| {
+            MessageError::SerializationFailed(format!("resource data too long: {e}"))
+        })?;
         result.push((rd_length >> 8) as u8);
         result.push((rd_length & 0xFF) as u8);
 
@@ -677,17 +707,21 @@ impl ResourceRecord {
         Ok(result)
     }
 
-    fn deserialize(buf: &[u8], i: &mut usize) -> Result<ResourceRecord, Box<dyn Error>> {
+    fn deserialize(buf: &[u8], i: &mut usize) -> Result<ResourceRecord, MessageError> {
         let name = deserialize_name(buf, i)?;
 
         check_space(buf, *i, 2)?;
         let raw_r_type = (buf[*i] as u16) << 8 | buf[*i + 1] as u16;
-        let rtype = Type::try_from(raw_r_type)?;
+        let rtype = Type::try_from(raw_r_type).map_err(|e| {
+            MessageError::DeserializationFailed(format!("invalid response type: {e}"))
+        })?;
         *i += 2;
 
         check_space(buf, *i, 2)?;
         let raw_r_class = (buf[*i] as u16) << 8 | buf[*i + 1] as u16;
-        let rclass = Class::try_from(raw_r_class)?;
+        let rclass = Class::try_from(raw_r_class).map_err(|e| {
+            MessageError::DeserializationFailed(format!("invalid response class: {e}"))
+        })?;
         *i += 2;
 
         check_space(buf, *i, 4)?;
@@ -709,7 +743,7 @@ impl ResourceRecord {
     }
 }
 
-fn serialize_name(s: &str) -> Result<Vec<u8>, Box<dyn Error>> {
+fn serialize_name(s: &str) -> Result<Vec<u8>, MessageError> {
     let mut result = Vec::new();
 
     let labels = s.split('.').collect::<Vec<_>>();
@@ -717,13 +751,17 @@ fn serialize_name(s: &str) -> Result<Vec<u8>, Box<dyn Error>> {
         let chars: Vec<char> = label.chars().collect();
 
         if chars.len() > 63 {
-            return Err("invalid label length".into());
+            return Err(MessageError::ValidationError(format!(
+                "label length greater than 63: {label}"
+            )));
         }
 
         result.push(chars.len() as u8);
         for ch in chars {
             if !ch.is_ascii_alphanumeric() && ch != '-' {
-                return Err("illegal character in label".into());
+                return Err(MessageError::ValidationError(format!(
+                    "illegal character in label: {ch}"
+                )));
             }
 
             result.push(ch as u8);
@@ -734,7 +772,7 @@ fn serialize_name(s: &str) -> Result<Vec<u8>, Box<dyn Error>> {
     Ok(result)
 }
 
-fn deserialize_name(buf: &[u8], i: &mut usize) -> Result<String, Box<dyn Error>> {
+fn deserialize_name(buf: &[u8], i: &mut usize) -> Result<String, MessageError> {
     let mut name = String::new();
 
     while buf[*i] != 0 {
@@ -745,7 +783,9 @@ fn deserialize_name(buf: &[u8], i: &mut usize) -> Result<String, Box<dyn Error>>
             *i += 2;
 
             if offset >= buf.len() {
-                return Err("invalid offset for name ptr".into());
+                return Err(MessageError::DeserializationFailed(
+                    "invalid offset for name ptr".to_owned(),
+                ));
             }
 
             let pointed_name = deserialize_name(buf, &mut offset)?;
@@ -759,14 +799,18 @@ fn deserialize_name(buf: &[u8], i: &mut usize) -> Result<String, Box<dyn Error>>
 
         if label_len > 63 {
             // catch the 10 and 01 cases for the two leading bits
-            return Err("invalid label length".into());
+            return Err(MessageError::DeserializationFailed(format!(
+                "invalid label length: {label_len}"
+            )));
         }
 
         check_space(buf, *i, label_len)?;
         for j in 0..label_len {
             let c = buf[*i + j];
             if !c.is_ascii_alphanumeric() && c != b'-' {
-                return Err("invalid character in name - corrupt packet?".into());
+                return Err(MessageError::DeserializationFailed(format!(
+                    "invalid character in name: {c}"
+                )));
             }
             name.push(c as char);
         }
@@ -782,9 +826,11 @@ fn deserialize_name(buf: &[u8], i: &mut usize) -> Result<String, Box<dyn Error>>
     Ok(name)
 }
 
-fn check_space(buf: &[u8], i: usize, amount: usize) -> Result<(), Box<dyn Error>> {
+fn check_space(buf: &[u8], i: usize, amount: usize) -> Result<(), MessageError> {
     if i + amount > buf.len() {
-        return Err("corrupt or truncated packet - invalid offset".into());
+        return Err(MessageError::DeserializationFailed(
+            "corrupt or truncated packet - invalid offset".to_owned(),
+        ));
     }
     Ok(())
 }

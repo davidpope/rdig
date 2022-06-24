@@ -28,12 +28,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
 
     let nameserver = if let Some(ns) = args.nameserver {
-        IpAddr::from_str(&ns).map_err(|e| format!("Failed to parse nameserver address: {e}"))?
+        IpAddr::from_str(&ns).map_err(|e| format!("failed to parse nameserver address: {e}"))?
     } else {
         let nss = get_system_default_nameservers()
-            .map_err(|e| format!("Failed to get system default nameservers: {e}"))?;
+            .map_err(|e| format!("failed to get system default nameservers: {e}"))?;
         if nss.is_empty() {
-            return Err("No system default nameservers defined".into());
+            return Err("no system default nameservers defined".into());
         }
         nss[0] // TODO: iterate through these below w/timeouts
     };
