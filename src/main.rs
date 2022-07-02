@@ -1,6 +1,6 @@
 use clap::Parser;
-use message::{Class, Message, QueryOrResponse, Type};
 use nameserver::get_system_default_nameservers;
+use rdig::message::{Class, Message, QueryOrResponse, Type};
 use std::{
     error::Error,
     io::Read,
@@ -9,7 +9,6 @@ use std::{
     str::FromStr,
 };
 
-mod message;
 mod nameserver;
 
 /// Simple toy program to query DNS like `dig`
