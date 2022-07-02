@@ -457,7 +457,12 @@ impl RrData {
             RrData::TxtStrings(ref txt_strings) => {
                 let mut bytes = vec![];
                 for s in txt_strings {
-                    bytes.push((s.len() >> 8) as u8);
+                    if s.len() > 255 {
+                        return Err(MessageError::ValidationError(format!(
+                            "TXT string too long: {}",
+                            s.len()
+                        )));
+                    }
                     bytes.push((s.len() & 0xFF) as u8);
                     for b in s.as_bytes() {
                         if !b.is_ascii() {
@@ -514,7 +519,7 @@ impl RrData {
             }
             Type::MX => {
                 check_space(buf, *i, 2)?;
-                let pref: u16 = (buf[0] as u16) << 8 | buf[1] as u16;
+                let pref: u16 = (buf[*i] as u16) << 8 | buf[*i + 1] as u16;
                 *i += 2;
                 let exch = deserialize_name(buf, i)?;
                 Ok(RrData::PrefString((pref, exch)))
