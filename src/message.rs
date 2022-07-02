@@ -766,10 +766,24 @@ fn serialize_name(s: &str) -> Result<Vec<u8>, MessageError> {
 }
 
 fn deserialize_name(buf: &[u8], i: &mut usize) -> Result<String, MessageError> {
+    deserialize_name_internal(buf, i, true)
+}
+
+fn deserialize_name_internal(
+    buf: &[u8],
+    i: &mut usize,
+    allow_compressed: bool,
+) -> Result<String, MessageError> {
     let mut name = String::new();
 
     while *i < buf.len() && buf[*i] != 0 {
         if buf[*i] & 0b11000000 == 0b11000000 {
+            if !allow_compressed {
+                return Err(MessageError::DeserializationFailed(
+                    "detected multiply-compressed name".to_owned(),
+                ));
+            }
+
             // this is a 14-bit pointer to elsewhere in the message
             check_space(buf, *i, 2)?;
             let mut offset = ((buf[*i] & 0b00111111) as usize) << 8 | buf[*i + 1] as usize;
@@ -781,7 +795,7 @@ fn deserialize_name(buf: &[u8], i: &mut usize) -> Result<String, MessageError> {
                 ));
             }
 
-            let pointed_name = deserialize_name(buf, &mut offset)?;
+            let pointed_name = deserialize_name_internal(buf, &mut offset, false)?;
             name.push_str(&pointed_name);
             return Ok(name);
         }
