@@ -15,6 +15,7 @@ pub enum MessageError {
 }
 
 #[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq))]
 pub struct Message {
     pub header: Header,
     pub questions: Vec<Question>,
@@ -50,6 +51,8 @@ impl Message {
 
         assert_eq!(self.questions.len(), self.header.qd_count as usize);
         assert_eq!(self.answers.len(), self.header.an_count as usize);
+        assert_eq!(self.authorities.len(), self.header.ns_count as usize);
+        assert_eq!(self.additionals.len(), self.header.ar_count as usize);
 
         for q in self.questions.iter() {
             let mut buf = q.serialize()?;
@@ -57,6 +60,16 @@ impl Message {
         }
 
         for a in self.answers.iter() {
+            let mut buf = a.serialize()?;
+            v.append(&mut buf);
+        }
+
+        for a in self.authorities.iter() {
+            let mut buf = a.serialize()?;
+            v.append(&mut buf);
+        }
+
+        for a in self.additionals.iter() {
             let mut buf = a.serialize()?;
             v.append(&mut buf);
         }
@@ -118,6 +131,7 @@ impl From<bool> for QueryOrResponse {
 }
 
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(test, derive(PartialEq))]
 pub enum OpCode {
     Query = 0,
     Iquery = 1,
@@ -137,7 +151,8 @@ impl TryFrom<u8> for OpCode {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(test, derive(PartialEq))]
 pub enum ResponseCode {
     NoError = 0,
     FormatError = 1,
@@ -178,6 +193,7 @@ impl Display for ResponseCode {
 }
 
 #[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq))]
 pub struct Header {
     pub id: u16,
     pub qr: QueryOrResponse,
@@ -220,10 +236,17 @@ impl Header {
 
         pkt[17..=20].store(self.opcode as u8);
 
+        *pkt.get_mut(21).unwrap() = self.authoritative_answer;
+        *pkt.get_mut(22).unwrap() = self.truncation;
         *pkt.get_mut(23).unwrap() = self.recursion_desired;
+        *pkt.get_mut(24).unwrap() = self.recursion_available;
+
+        pkt[28..=31].store(self.response_code as u8);
 
         pkt[32..=47].store_be(self.qd_count);
         pkt[48..=63].store_be(self.an_count);
+        pkt[64..=79].store_be(self.ns_count);
+        pkt[80..=95].store_be(self.ar_count);
 
         pkt.as_raw_slice().to_vec()
     }
@@ -281,6 +304,7 @@ impl Header {
 /// Question
 #[allow(clippy::upper_case_acronyms)]
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(test, derive(PartialEq))]
 pub enum Type {
     A = 1,
     NS = 2,
@@ -351,6 +375,7 @@ impl Display for Type {
 }
 
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(test, derive(PartialEq))]
 pub enum Class {
     IN = 1,
     // CS,
@@ -379,6 +404,7 @@ impl Display for Class {
 }
 
 #[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq))]
 pub struct Question {
     pub qname: String,
     pub qtype: Type,
@@ -429,6 +455,7 @@ impl Question {
 /// Resource Record
 
 #[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq))]
 pub enum RrData {
     Ipv4Addr(Ipv4Addr),
     Name(String),
@@ -588,6 +615,7 @@ impl Display for RrData {
 }
 
 #[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq))]
 pub struct Soa {
     mname: String,
     rname: String,
@@ -669,6 +697,7 @@ impl Soa {
 }
 
 #[derive(Debug)]
+#[cfg_attr(test, derive(PartialEq))]
 pub struct ResourceRecord {
     pub name: String,
     pub rtype: Type,
@@ -853,6 +882,64 @@ fn check_space(buf: &[u8], i: usize, amount: usize) -> Result<(), MessageError> 
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn serialize_deserialize_round_trip() {
+        let mut m1 = Message::new_query("ietf.org", Type::A, Class::IN);
+        m1.answers.push(ResourceRecord {
+            name: "example.com".to_owned(),
+            rtype: Type::A,
+            rclass: Class::IN,
+            ttl: 86400,
+            rdata: RrData::Ipv4Addr([1, 2, 3, 4].into()),
+        });
+        m1.header.an_count += 1;
+        m1.answers.push(ResourceRecord {
+            name: "example.com".to_owned(),
+            rtype: Type::CNAME,
+            rclass: Class::IN,
+            ttl: 86400,
+            rdata: RrData::Name("some-cname.example.com".to_owned()),
+        });
+        m1.header.an_count += 1;
+        m1.answers.push(ResourceRecord {
+            name: "example.com".to_owned(),
+            rtype: Type::MX,
+            rclass: Class::IN,
+            ttl: 86400,
+            rdata: RrData::PrefString((100, "some-mx.example.com".to_owned())),
+        });
+        m1.header.an_count += 1;
+        m1.answers.push(ResourceRecord {
+            name: "example.com".to_owned(),
+            rtype: Type::TXT,
+            rclass: Class::IN,
+            ttl: 86400,
+            rdata: RrData::TxtStrings(vec!["some text data".into(), "some more text data".into()]),
+        });
+        m1.header.an_count += 1;
+        m1.answers.push(ResourceRecord {
+            name: "example.com".to_owned(),
+            rtype: Type::SOA,
+            rclass: Class::IN,
+            ttl: 86400,
+            rdata: RrData::Soa(Soa {
+                mname: "example.com".to_owned(),
+                rname: "mbox.example.com".to_owned(),
+                serial: 1,
+                refresh: 86400,
+                retry: 86400,
+                expire: 86400,
+                minimum: 86400,
+            }),
+        });
+        m1.header.an_count += 1;
+
+        let buf = m1.serialize().unwrap();
+        let m2 = Message::deserialize(&buf).unwrap();
+
+        assert_eq!(m1, m2);
+    }
 
     #[test]
     fn deserialize_fuzzed_data_1() {
