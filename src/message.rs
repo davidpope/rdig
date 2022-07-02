@@ -768,7 +768,7 @@ fn serialize_name(s: &str) -> Result<Vec<u8>, MessageError> {
 fn deserialize_name(buf: &[u8], i: &mut usize) -> Result<String, MessageError> {
     let mut name = String::new();
 
-    while buf[*i] != 0 {
+    while *i < buf.len() && buf[*i] != 0 {
         if buf[*i] & 0b11000000 == 0b11000000 {
             // this is a 14-bit pointer to elsewhere in the message
             check_space(buf, *i, 2)?;
@@ -809,12 +809,15 @@ fn deserialize_name(buf: &[u8], i: &mut usize) -> Result<String, MessageError> {
         }
         *i += label_len;
 
-        if buf[*i] != 0 {
+        if *i < buf.len() && buf[*i] != 0 {
             name.push('.');
         }
     }
-    check_space(buf, *i, 1)?;
-    *i += 1; // skip terminator
+
+    if *i < buf.len() {
+        check_space(buf, *i, 1)?;
+        *i += 1; // skip terminator
+    }
 
     Ok(name)
 }
