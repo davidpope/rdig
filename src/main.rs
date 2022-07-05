@@ -52,7 +52,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 fn query(hostname: &str, qtype: Type, nameserver: IpAddr) -> Result<Message, Box<dyn Error>> {
     let query = Message::new_query(hostname, qtype, Class::IN);
-    let write_buf = query.serialize()?;
+    let mut write_buf = Vec::new();
+    query.serialize(&mut write_buf)?;
 
     let response = if write_buf.len() <= 512 {
         let mut r = query_udp(nameserver, &write_buf)?;

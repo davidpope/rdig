@@ -1,16 +1,19 @@
 use bitvec::prelude::*;
-use std::{fmt::Display, net::Ipv4Addr, str::FromStr};
+use std::{fmt::Display, io::Write, net::Ipv4Addr, str::FromStr};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum MessageError {
-    #[error("validation error: {0}")]
+    #[error("validation error")]
     ValidationError(String),
 
-    #[error("serialization failed: {0}")]
+    #[error("serialization failed")]
     SerializationFailed(String),
 
-    #[error("deserialization failed: {0}")]
+    #[error(transparent)]
+    IoError(#[from] std::io::Error),
+
+    #[error("deserialization failed")]
     DeserializationFailed(String),
 }
 
@@ -46,8 +49,8 @@ impl Message {
         msg
     }
 
-    pub fn serialize(&self) -> Result<Vec<u8>, MessageError> {
-        let mut v = self.header.serialize();
+    pub fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), MessageError> {
+        self.header.serialize(buf)?;
 
         assert_eq!(self.questions.len(), self.header.qd_count as usize);
         assert_eq!(self.answers.len(), self.header.an_count as usize);
@@ -55,26 +58,22 @@ impl Message {
         assert_eq!(self.additionals.len(), self.header.ar_count as usize);
 
         for q in self.questions.iter() {
-            let mut buf = q.serialize()?;
-            v.append(&mut buf);
+            q.serialize(buf)?;
         }
 
         for a in self.answers.iter() {
-            let mut buf = a.serialize()?;
-            v.append(&mut buf);
+            a.serialize(buf)?;
         }
 
         for a in self.authorities.iter() {
-            let mut buf = a.serialize()?;
-            v.append(&mut buf);
+            a.serialize(buf)?;
         }
 
         for a in self.additionals.iter() {
-            let mut buf = a.serialize()?;
-            v.append(&mut buf);
+            a.serialize(buf)?;
         }
 
-        Ok(v)
+        Ok(())
     }
 
     pub fn deserialize(buf: &[u8]) -> Result<Message, MessageError> {
@@ -227,7 +226,7 @@ impl Header {
         }
     }
 
-    fn serialize(&self) -> Vec<u8> {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), MessageError> {
         let mut pkt: BitArray<[u8; 12], Msb0> = BitArray::ZERO;
 
         pkt[..=15].store_be(self.id);
@@ -248,7 +247,9 @@ impl Header {
         pkt[64..=79].store_be(self.ns_count);
         pkt[80..=95].store_be(self.ar_count);
 
-        pkt.as_raw_slice().to_vec()
+        buf.write_all(pkt.as_raw_slice())?;
+
+        Ok(())
     }
 
     fn deserialize(buf: &[u8], i: &mut usize) -> Result<Header, MessageError> {
@@ -412,18 +413,13 @@ pub struct Question {
 }
 
 impl Question {
-    fn serialize(&self) -> Result<Vec<u8>, MessageError> {
-        let mut result: Vec<u8> = Vec::new();
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), MessageError> {
+        serialize_name(&self.qname, buf)?;
 
-        result.append(&mut serialize_name(&self.qname)?);
+        buf.write_all(&[0_u8, self.qtype as u8])?;
+        buf.write_all(&[0_u8, self.qclass as u8])?;
 
-        result.push(0); // msb
-        result.push(self.qtype as u8); // lsb
-
-        result.push(0); // msb
-        result.push(self.qclass as u8); // lsb
-
-        Ok(result)
+        Ok(())
     }
 
     fn deserialize(buf: &[u8], i: &mut usize) -> Result<Question, MessageError> {
@@ -465,6 +461,9 @@ pub enum RrData {
 }
 
 impl RrData {
+    // The reason this returns a Vec of data instead of writing directly to a buffer (like
+    // the rest of the serialize methods) is that the DNS protocol requires us to write
+    // the size of the rdata before writing the rdata itself.
     fn serialize(&self) -> Result<Vec<u8>, MessageError> {
         match self {
             RrData::Ipv4Addr(addr) => {
@@ -472,13 +471,14 @@ impl RrData {
                 Ok(Vec::from(bytes))
             }
             RrData::Name(s) => {
-                let bytes = serialize_name(s)?;
+                let mut bytes = Vec::new();
+                serialize_name(s, &mut bytes)?;
                 Ok(bytes)
             }
             RrData::PrefString(pref_string) => {
-                let mut bytes = vec![(pref_string.0 >> 8) as u8, (pref_string.0 & 0xFF) as u8];
-                bytes.append(&mut serialize_name(&pref_string.1)?);
-
+                let mut bytes = Vec::new();
+                bytes.write_all(&[(pref_string.0 >> 8) as u8, (pref_string.0 & 0xFF) as u8])?;
+                serialize_name(&pref_string.1, &mut bytes)?;
                 Ok(bytes)
             }
             RrData::TxtStrings(ref txt_strings) => {
@@ -503,7 +503,8 @@ impl RrData {
                 Ok(bytes)
             }
             RrData::Soa(soa) => {
-                let bytes = soa.serialize()?;
+                let mut bytes = Vec::new();
+                soa.serialize(&mut bytes)?;
                 Ok(bytes)
             }
         }
@@ -627,28 +628,28 @@ pub struct Soa {
 }
 
 impl Soa {
-    fn serialize(&self) -> Result<Vec<u8>, MessageError> {
-        let mut result = Vec::new();
-
-        result.append(&mut serialize_name(&self.mname)?);
-        result.append(&mut serialize_name(&self.rname)?);
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), MessageError> {
+        serialize_name(&self.mname, buf)?;
+        serialize_name(&self.rname, buf)?;
 
         macro_rules! write_be_u32 {
-            ($vec:ident, $var:expr) => {
-                $vec.push((($var & 0xFF000000) >> 24) as u8);
-                $vec.push((($var & 0x00FF0000) >> 16) as u8);
-                $vec.push((($var & 0x0000FF00) >> 8) as u8);
-                $vec.push(($var & 0x000000FF) as u8);
+            ($buf:ident, $var:expr) => {
+                $buf.write_all(&[
+                    (($var & 0xFF000000) >> 24) as u8,
+                    (($var & 0x00FF0000) >> 16) as u8,
+                    (($var & 0x0000FF00) >> 8) as u8,
+                    ($var & 0x000000FF) as u8,
+                ])?;
             };
         }
 
-        write_be_u32!(result, self.serial);
-        write_be_u32!(result, self.refresh);
-        write_be_u32!(result, self.retry);
-        write_be_u32!(result, self.expire);
-        write_be_u32!(result, self.minimum);
+        write_be_u32!(buf, self.serial);
+        write_be_u32!(buf, self.refresh);
+        write_be_u32!(buf, self.retry);
+        write_be_u32!(buf, self.expire);
+        write_be_u32!(buf, self.minimum);
 
-        Ok(result)
+        Ok(())
     }
 
     fn deserialize(buf: &[u8], i: &mut usize) -> Result<Soa, MessageError> {
@@ -707,31 +708,30 @@ pub struct ResourceRecord {
 }
 
 impl ResourceRecord {
-    fn serialize(&self) -> Result<Vec<u8>, MessageError> {
-        let mut result = Vec::new();
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), MessageError> {
+        serialize_name(&self.name, buf)?;
 
-        result.append(&mut serialize_name(&self.name)?);
+        buf.write_all(&[0_u8, self.rtype as u8])?;
+        buf.write_all(&[0_u8, self.rclass as u8])?;
 
-        result.push(0); // msb
-        result.push(self.rtype as u8); // lsb
-        result.push(0); // msb
-        result.push(self.rclass as u8); // lsb
+        buf.write_all(&[
+            ((self.ttl & 0xFF000000) >> 24) as u8,
+            ((self.ttl & 0x00FF0000) >> 16) as u8,
+            ((self.ttl & 0x0000FF00) >> 8) as u8,
+            (self.ttl & 0x000000FF) as u8,
+        ])?;
 
-        result.push(((self.ttl & 0xFF000000) >> 24) as u8);
-        result.push(((self.ttl & 0x00FF0000) >> 16) as u8);
-        result.push(((self.ttl & 0x0000FF00) >> 8) as u8);
-        result.push((self.ttl & 0x000000FF) as u8);
-
-        let mut rdata = self.rdata.serialize()?;
+        // N.B. here we must retrieve the data to be written so that we can write its length
+        // before writing the data itself.
+        let rdata = self.rdata.serialize()?;
         let rd_length = u16::try_from(rdata.len()).map_err(|e| {
             MessageError::SerializationFailed(format!("resource data too long: {e}"))
         })?;
-        result.push((rd_length >> 8) as u8);
-        result.push((rd_length & 0xFF) as u8);
 
-        result.append(&mut rdata);
+        buf.write_all(&[(rd_length >> 8) as u8, (rd_length & 0xFF) as u8])?;
+        buf.write_all(&rdata)?;
 
-        Ok(result)
+        Ok(())
     }
 
     fn deserialize(buf: &[u8], i: &mut usize) -> Result<ResourceRecord, MessageError> {
@@ -770,9 +770,7 @@ impl ResourceRecord {
     }
 }
 
-fn serialize_name(s: &str) -> Result<Vec<u8>, MessageError> {
-    let mut result = Vec::new();
-
+fn serialize_name(s: &str, buf: &mut Vec<u8>) -> Result<(), MessageError> {
     let labels = s.split('.').collect::<Vec<_>>();
     for label in labels {
         let chars: Vec<char> = label.chars().collect();
@@ -783,7 +781,7 @@ fn serialize_name(s: &str) -> Result<Vec<u8>, MessageError> {
             )));
         }
 
-        result.push(chars.len() as u8);
+        buf.write_all(&[chars.len() as u8])?;
         for ch in chars {
             if !ch.is_ascii_alphanumeric() && ch != '-' {
                 return Err(MessageError::ValidationError(format!(
@@ -791,12 +789,12 @@ fn serialize_name(s: &str) -> Result<Vec<u8>, MessageError> {
                 )));
             }
 
-            result.push(ch as u8);
+            buf.write_all(&[ch as u8])?;
         }
     }
-    result.push(0); // labels terminator
+    buf.write_all(&[0])?; // labels terminator
 
-    Ok(result)
+    Ok(())
 }
 
 fn deserialize_name(buf: &[u8], i: &mut usize) -> Result<String, MessageError> {
@@ -935,7 +933,8 @@ mod test {
         });
         m1.header.an_count += 1;
 
-        let buf = m1.serialize().unwrap();
+        let mut buf = Vec::new();
+        m1.serialize(&mut buf).unwrap();
         let m2 = Message::deserialize(&buf).unwrap();
 
         assert_eq!(m1, m2);
