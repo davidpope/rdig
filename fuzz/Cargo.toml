@@ -19,7 +19,7 @@ path = ".."
 members = ["."]
 
 [[bin]]
-name = "fuzz_target_1"
-path = "fuzz_targets/fuzz_target_1.rs"
+name = "message_deserialize"
+path = "fuzz_targets/message_deserialize.rs"
 test = false
 doc = false
