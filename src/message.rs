@@ -477,7 +477,7 @@ impl RrData {
             }
             RrData::PrefString(pref_string) => {
                 let mut bytes = Vec::new();
-                bytes.write_all(&[(pref_string.0 >> 8) as u8, (pref_string.0 & 0xFF) as u8])?;
+                bytes.write_all(&[(pref_string.0 >> 8) as u8, pref_string.0 as u8])?;
                 serialize_name(&pref_string.1, &mut bytes)?;
                 Ok(bytes)
             }
@@ -490,7 +490,7 @@ impl RrData {
                             s.len()
                         )));
                     }
-                    bytes.push((s.len() & 0xFF) as u8);
+                    bytes.push(s.len() as u8);
                     for b in s.as_bytes() {
                         if !b.is_ascii() {
                             return Err(MessageError::ValidationError(format!(
@@ -635,10 +635,10 @@ impl Soa {
         macro_rules! write_be_u32 {
             ($buf:ident, $var:expr) => {
                 $buf.write_all(&[
-                    (($var & 0xFF000000) >> 24) as u8,
-                    (($var & 0x00FF0000) >> 16) as u8,
-                    (($var & 0x0000FF00) >> 8) as u8,
-                    ($var & 0x000000FF) as u8,
+                    ($var >> 24) as u8,
+                    ($var >> 16) as u8,
+                    ($var >> 8) as u8,
+                    $var as u8,
                 ])?;
             };
         }
@@ -715,10 +715,10 @@ impl ResourceRecord {
         buf.write_all(&[0_u8, self.rclass as u8])?;
 
         buf.write_all(&[
-            ((self.ttl & 0xFF000000) >> 24) as u8,
-            ((self.ttl & 0x00FF0000) >> 16) as u8,
-            ((self.ttl & 0x0000FF00) >> 8) as u8,
-            (self.ttl & 0x000000FF) as u8,
+            (self.ttl >> 24) as u8,
+            (self.ttl >> 16) as u8,
+            (self.ttl >> 8) as u8,
+            (self.ttl) as u8,
         ])?;
 
         // N.B. here we must retrieve the data to be written so that we can write its length
@@ -728,7 +728,7 @@ impl ResourceRecord {
             MessageError::SerializationFailed(format!("resource data too long: {e}"))
         })?;
 
-        buf.write_all(&[(rd_length >> 8) as u8, (rd_length & 0xFF) as u8])?;
+        buf.write_all(&[(rd_length >> 8) as u8, rd_length as u8])?;
         buf.write_all(&rdata)?;
 
         Ok(())
