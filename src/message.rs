@@ -481,7 +481,7 @@ impl RrData {
                 serialize_name(&pref_string.1, &mut bytes)?;
                 Ok(bytes)
             }
-            RrData::TxtStrings(ref txt_strings) => {
+            RrData::TxtStrings(txt_strings) => {
                 let mut bytes = vec![];
                 for s in txt_strings {
                     if s.len() > 255 {
@@ -775,6 +775,12 @@ fn serialize_name(s: &str, buf: &mut Vec<u8>) -> Result<(), MessageError> {
     for label in labels {
         let chars: Vec<char> = label.chars().collect();
 
+        if chars.is_empty() {
+            return Err(MessageError::ValidationError(
+                "zero-length label".to_owned(),
+            ));
+        }
+
         if chars.len() > 63 {
             return Err(MessageError::ValidationError(format!(
                 "label length greater than 63: {label}"
@@ -938,6 +944,64 @@ mod test {
         let m2 = Message::deserialize(&buf).unwrap();
 
         assert_eq!(m1, m2);
+    }
+
+    #[test]
+    fn long_rdata_fails_serialization() {
+        let mut m = Message::new_query("example.com", Type::A, Class::IN);
+        let mut strings = vec![];
+        // build strings over 64k total length
+        for _ in 0..(1 << 16) / 255 {
+            strings.push(String::from_utf8([b'a'; 255].to_vec()).unwrap());
+        }
+        m.answers.push(ResourceRecord {
+            name: "example.com".to_owned(),
+            rtype: Type::TXT,
+            rclass: Class::IN,
+            ttl: 86400,
+            rdata: RrData::TxtStrings(strings),
+        });
+        m.header.an_count += 1;
+
+        let mut buf = vec![];
+        let r = m.serialize(&mut buf);
+
+        assert!(matches!(r, Err(MessageError::SerializationFailed(_))));
+    }
+
+    #[test]
+    fn long_name_label_fails_serialization() {
+        // labels can only be 63 bytes long
+        let long_label_name =
+            "1234567890123456789012345678901234567890123456789012345678901234.example.com";
+        let m = Message::new_query(long_label_name, Type::A, Class::IN);
+
+        let mut buf = vec![];
+        let r = m.serialize(&mut buf);
+
+        assert!(matches!(r, Err(MessageError::ValidationError(_))));
+    }
+
+    #[test]
+    fn non_ascii_name_fails_serialization() {
+        let name = "🙂.example.com";
+        let m = Message::new_query(name, Type::A, Class::IN);
+
+        let mut buf = vec![];
+        let r = m.serialize(&mut buf);
+
+        assert!(matches!(r, Err(MessageError::ValidationError(_))));
+    }
+
+    #[test]
+    fn zero_length_label_fails_serialization() {
+        let name = "...";
+        let m = Message::new_query(name, Type::A, Class::IN);
+
+        let mut buf = vec![];
+        let r = m.serialize(&mut buf);
+
+        assert!(matches!(r, Err(MessageError::ValidationError(_))));
     }
 
     #[test]
