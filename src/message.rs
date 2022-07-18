@@ -773,30 +773,28 @@ impl ResourceRecord {
 fn serialize_name(s: &str, buf: &mut Vec<u8>) -> Result<(), MessageError> {
     let labels = s.split('.').collect::<Vec<_>>();
     for label in labels {
-        let chars: Vec<char> = label.chars().collect();
-
-        if chars.is_empty() {
+        if label.is_empty() {
             return Err(MessageError::ValidationError(
                 "zero-length label".to_owned(),
             ));
         }
 
-        if chars.len() > 63 {
+        if label.len() > 63 {
             return Err(MessageError::ValidationError(format!(
                 "label length greater than 63: {label}"
             )));
         }
 
-        buf.write_all(&[chars.len() as u8])?;
-        for ch in chars {
+        for ch in label.chars() {
             if !ch.is_ascii_alphanumeric() && ch != '-' {
                 return Err(MessageError::ValidationError(format!(
                     "illegal character in label: {ch}"
                 )));
             }
-
-            buf.write_all(&[ch as u8])?;
         }
+
+        buf.write_all(&[label.len() as u8])?;
+        buf.write_all(label.as_bytes())?;
     }
     buf.write_all(&[0])?; // labels terminator
 
