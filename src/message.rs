@@ -49,7 +49,7 @@ impl Message {
         msg
     }
 
-    pub fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), MessageError> {
+    pub fn serialize<W: Write>(&self, buf: &mut W) -> Result<(), MessageError> {
         self.header.serialize(buf)?;
 
         assert_eq!(self.questions.len(), self.header.qd_count as usize);
@@ -226,7 +226,7 @@ impl Header {
         }
     }
 
-    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), MessageError> {
+    fn serialize<W: Write>(&self, buf: &mut W) -> Result<(), MessageError> {
         let mut pkt: BitArray<[u8; 12], Msb0> = BitArray::ZERO;
 
         pkt[..=15].store_be(self.id);
@@ -413,7 +413,7 @@ pub struct Question {
 }
 
 impl Question {
-    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), MessageError> {
+    fn serialize<W: Write>(&self, buf: &mut W) -> Result<(), MessageError> {
         serialize_name(&self.qname, buf)?;
 
         buf.write_all(&[0_u8, self.qtype as u8])?;
@@ -628,7 +628,7 @@ pub struct Soa {
 }
 
 impl Soa {
-    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), MessageError> {
+    fn serialize<W: Write>(&self, buf: &mut W) -> Result<(), MessageError> {
         serialize_name(&self.mname, buf)?;
         serialize_name(&self.rname, buf)?;
 
@@ -708,7 +708,7 @@ pub struct ResourceRecord {
 }
 
 impl ResourceRecord {
-    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), MessageError> {
+    fn serialize<W: Write>(&self, buf: &mut W) -> Result<(), MessageError> {
         serialize_name(&self.name, buf)?;
 
         buf.write_all(&[0_u8, self.rtype as u8])?;
@@ -770,7 +770,7 @@ impl ResourceRecord {
     }
 }
 
-fn serialize_name(s: &str, buf: &mut Vec<u8>) -> Result<(), MessageError> {
+fn serialize_name<W: Write>(s: &str, buf: &mut W) -> Result<(), MessageError> {
     let labels = s.split('.').collect::<Vec<_>>();
     for label in labels {
         if label.is_empty() {
